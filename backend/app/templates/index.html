@@ -13,8 +13,7 @@
 <header>
   <h1>HiPass 영수증 자동수집</h1>
   <div id="header-actions">
-    <input type="date" id="single-date" />
-    <button id="single-btn" onclick="startSingleCapture()">단일 캡처</button>
+    <button id="delete-all-btn" onclick="deleteAllScreenshots()">전체 삭제</button>
     <button id="refresh-btn" onclick="startRefresh()">전체 새로고침</button>
   </div>
 </header>
@@ -82,6 +81,25 @@ let _hideTimer = null;
 
 const DAYS = ['일', '월', '화', '수', '목', '금', '토'];
 
+const CAPTURE_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
+  <path fill-rule="evenodd" d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.433a.75.75 0 000-1.5H3.989a.75.75 0 00-.75.75v4.242a.75.75 0 001.5 0v-2.43l.31.31a7 7 0 0011.712-3.138.75.75 0 00-1.449-.39zm1.23-3.723a.75.75 0 00.219-.53V2.929a.75.75 0 00-1.5 0V5.36l-.31-.31A7 7 0 003.239 8.188a.75.75 0 101.448.389A5.5 5.5 0 0113.89 6.11l.311.31h-2.432a.75.75 0 000 1.5h4.243a.75.75 0 00.53-.219z" clip-rule="evenodd" />
+</svg>`;
+
+function getCaptureIconHTML(dateStr) {
+  return `<button class="capture-icon-btn" data-date="${dateStr}" onclick="startDateCapture('${dateStr}')" title="${dateStr} 재캡처">${CAPTURE_ICON_SVG}</button>`;
+}
+
+function setAllCaptureIconsDisabled(disabled) {
+  document.querySelectorAll('.capture-icon-btn').forEach(btn => { btn.disabled = disabled; });
+}
+
+function setDateIconSpinning(dateStr, spinning) {
+  const btn = document.querySelector(`.capture-icon-btn[data-date="${dateStr}"]`);
+  if (!btn) return;
+  const svg = btn.querySelector('svg');
+  if (svg) svg.classList.toggle('spinning', spinning);
+}
+
 function formatDateHTML(dateStr) {
   const d = new Date(dateStr + 'T00:00:00');
   const day = d.getDay();
@@ -91,9 +109,9 @@ function formatDateHTML(dateStr) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('single-date').value = new Date().toISOString().split('T')[0];
   document.querySelectorAll('.date-cell[data-date]').forEach(td => {
-    td.innerHTML = formatDateHTML(td.dataset.date);
+    const dateStr = td.dataset.date;
+    td.innerHTML = formatDateHTML(dateStr) + getCaptureIconHTML(dateStr);
   });
 });
 
@@ -127,39 +145,52 @@ function showProgress(pct) {
 
 async function startRefresh() {
   const btn = document.getElementById('refresh-btn');
+  const deleteBtn = document.getElementById('delete-all-btn');
   btn.disabled = true;
-  document.getElementById('single-btn').disabled = true;
+  deleteBtn.disabled = true;
+  setAllCaptureIconsDisabled(true);
   showStatus('전체 캡처 시작 중...');
   showProgress(0);
 
   const res = await fetch('/api/refresh', { method: 'POST' });
   const { job_id } = await res.json();
-  pollStatus(job_id, [btn, document.getElementById('single-btn')]);
+  pollStatus(job_id, [btn, deleteBtn]);
 }
 
-async function startSingleCapture() {
-  const dateVal = document.getElementById('single-date').value;
-  if (!dateVal) { alert('날짜를 선택하세요'); return; }
-
-  const btn = document.getElementById('single-btn');
-  btn.disabled = true;
+async function startDateCapture(dateStr) {
+  setAllCaptureIconsDisabled(true);
   document.getElementById('refresh-btn').disabled = true;
-  showStatus(`${dateVal} 캡처 시작 중...`);
+  document.getElementById('delete-all-btn').disabled = true;
+  setDateIconSpinning(dateStr, true);
+  showStatus(`${dateStr} 캡처 시작 중...`);
   showProgress(0);
 
-  const res = await fetch(`/api/capture/${dateVal}`, { method: 'POST' });
+  const res = await fetch(`/api/capture/${dateStr}`, { method: 'POST' });
   const data = await res.json();
   if (data.error) {
     showStatus(`오류: ${data.error}`, '✗');
-    btn.disabled = false;
+    setAllCaptureIconsDisabled(false);
     document.getElementById('refresh-btn').disabled = false;
+    document.getElementById('delete-all-btn').disabled = false;
+    setDateIconSpinning(dateStr, false);
     return;
   }
-  pollStatus(data.job_id, [btn, document.getElementById('refresh-btn')]);
+  pollStatus(data.job_id, [document.getElementById('refresh-btn'), document.getElementById('delete-all-btn')], dateStr);
 }
 
-function pollStatus(job_id, btnsToRestore) {
-  const restore = btnsToRestore || [document.getElementById('refresh-btn')];
+async function deleteAllScreenshots() {
+  if (!confirm('모든 스크린샷을 삭제하시겠습니까?')) return;
+  const btn = document.getElementById('delete-all-btn');
+  btn.disabled = true;
+  showStatus('삭제 중...');
+  const res = await fetch('/api/screenshots/delete-all', { method: 'POST' });
+  const data = await res.json();
+  await reloadTable();
+  btn.disabled = false;
+  completeStatus(`${data.deleted}개 삭제 완료`);
+}
+
+function pollStatus(job_id, btnsToRestore, spinningDateStr) {
   _pollTimer = setInterval(async () => {
     const res = await fetch(`/api/status/${job_id}`);
     const job = await res.json();
@@ -175,7 +206,9 @@ function pollStatus(job_id, btnsToRestore) {
       showProgress(100);
       await reloadTable();
       await reloadLogs();
-      restore.forEach(b => b.disabled = false);
+      setAllCaptureIconsDisabled(false);
+      if (spinningDateStr) setDateIconSpinning(spinningDateStr, false);
+      if (btnsToRestore) btnsToRestore.forEach(b => b.disabled = false);
       completeStatus(`완료 (${job.done}/${job.total})`);
     }
   }, 1500);
@@ -187,15 +220,16 @@ async function reloadTable() {
   const tbody = document.getElementById('screenshot-tbody');
   tbody.innerHTML = list.map(item => {
     const dateHTML = formatDateHTML(item.date);
+    const iconHTML = getCaptureIconHTML(item.date);
     if (item.exists) {
       return `<tr>
-        <td class="date-cell">${dateHTML}</td>
+        <td class="date-cell">${dateHTML}${iconHTML}</td>
         <td><button class="preview-btn" onclick="openModal('/screenshots/${item.filename}')">미리보기</button></td>
         <td><a class="dl-btn" href="/screenshots/${item.filename}" download="${item.filename}">다운로드</a></td>
       </tr>`;
     }
     return `<tr>
-      <td class="date-cell">${dateHTML}</td>
+      <td class="date-cell">${dateHTML}${iconHTML}</td>
       <td><span class="empty-label">기록 없음</span></td>
       <td></td>
     </tr>`;

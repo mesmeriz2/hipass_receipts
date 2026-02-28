@@ -13,8 +13,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.50'
-          memory: 768M
+          cpus: '1.0'
+          memory: 1024M
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]

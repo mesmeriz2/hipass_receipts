@@ -11,14 +11,11 @@ CHROMIUM_ARGS = [
     "--no-sandbox",
     "--disable-gpu",
     "--disable-dev-shm-usage",
-    "--disable-software-rasterizer",
     "--disable-extensions",
     "--disable-background-timer-throttling",
     "--disable-renderer-backgrounding",
     "--disable-backgrounding-occluded-windows",
     "--disable-features=TranslateUI",
-    "--single-process",
-    "--js-flags=--max-old-space-size=256",
 ]
 
 # In-memory log for the most recent capture session
@@ -127,76 +124,105 @@ async def capture_date(
 
     def on_dialog(dialog):
         nonlocal alert_fired
-        alert_fired = True
-        asyncio.ensure_future(dialog.dismiss())
+        msg = dialog.message.lower() if dialog.message else ""
+        print(f"[scraper] dialog: type={dialog.type!r}, message={dialog.message!r}")
+        if dialog.type == "alert" and ("없습니다" in msg or "없음" in msg):
+            # "출력할 영수증 데이터가 없습니다." — genuine no-data alert
+            alert_fired = True
+            asyncio.ensure_future(dialog.dismiss())
+        else:
+            # confirm() asking to print receipt → accept so the popup window opens
+            asyncio.ensure_future(dialog.accept())
 
     page.on("dialog", on_dialog)
     try:
         form = await _find_form_frame(page)
+        print(f"[scraper] {date_str}: form frame = {getattr(form, 'url', 'main_page')!r}")
 
-        # Use JS to set date values and fire change events — avoids datepicker
-        # widget interference that fill()+Enter can cause between loop iterations.
+        # #sDate_view / #eDate_view are display-only fields.
+        # #sDate / #eDate are the hidden inputs actually used for the query (YYYYMMDD format).
+        date_hidden = target_date.strftime("%Y%m%d")
         await form.evaluate(
-            """(dateStr) => {
+            """([dateStr, dateHidden]) => {
                 const s = document.querySelector('#sDate_view');
                 const e = document.querySelector('#eDate_view');
+                const sH = document.querySelector('#sDate');
+                const eH = document.querySelector('#eDate');
                 if (s) { s.value = dateStr; s.dispatchEvent(new Event('change', {bubbles: true})); }
                 if (e) { e.value = dateStr; e.dispatchEvent(new Event('change', {bubbles: true})); }
+                if (sH) { sH.value = dateHidden; sH.dispatchEvent(new Event('change', {bubbles: true})); }
+                if (eH) { eH.value = dateHidden; eH.dispatchEvent(new Event('change', {bubbles: true})); }
             }""",
-            date_str,
+            [date_str, date_hidden],
         )
+        print(f"[scraper] {date_str}: date set → view={date_str}, hidden={date_hidden}")
 
         await form.wait_for_selector("#lookupBtn a", timeout=5000)
-
         await form.click("#lookupBtn a")
+        print(f"[scraper] {date_str}: lookup clicked")
 
-        # Wait for iframe to finish loading with the new query results,
-        # then re-acquire frame reference so we get the new JS context.
-        await asyncio.sleep(0.5)
+        # Give the iframe navigation time to actually start before waiting.
+        # Using 1.5s here because wait_for_load_state("load") returns immediately
+        # if the frame is already in "loaded" state from its previous navigation.
+        await asyncio.sleep(1.5)
+
         frame = page.frame(name="if_main_post")
         if frame is None:
+            print(f"[scraper] {date_str}: if_main_post not found (step 1)")
             return None
+
         try:
-            await frame.wait_for_load_state("load", timeout=12000)
+            await frame.wait_for_load_state("load", timeout=15000)
         except Exception:
             pass
-        # Re-acquire once more after load to ensure context is current
+
+        # Re-acquire after load to ensure we have the current JS context
         frame = page.frame(name="if_main_post")
         if frame is None:
+            print(f"[scraper] {date_str}: if_main_post not found (step 2)")
             return None
 
         popup_btn_selector = "#billAll"
         try:
-            await frame.wait_for_selector(popup_btn_selector, timeout=3000)
+            # 10s timeout — covers slow iframe rendering after navigation
+            await frame.wait_for_selector(popup_btn_selector, timeout=10000)
         except Exception:
-            # No results for this date
+            print(f"[scraper] {date_str}: #billAll not found — no data or iframe still loading")
             return None
 
+        print(f"[scraper] {date_str}: #billAll found, clicking")
         await frame.eval_on_selector(popup_btn_selector, "el => el.scrollIntoView()")
 
-        # Click #billAll — may trigger a JS alert ("데이터 없음") or open a popup
+        # Reset alert_fired here — a prior lookup phase alert (e.g. session warning)
+        # must not be mistaken for a "no receipt data" alert from #billAll itself.
+        alert_fired = False
         await frame.eval_on_selector(popup_btn_selector, "el => el.click()")
-        await asyncio.sleep(0.5)  # give alert/popup time to appear
+        await asyncio.sleep(0.8)  # give alert/popup time to appear
 
         if alert_fired:
-            # "출력할 영수증 데이터가 없습니다." — no data for this date
+            # "출력할 영수증 데이터가 없습니다." — no receipt data for this date
+            print(f"[scraper] {date_str}: alert fired after #billAll — no receipt data")
             return None
 
         # No alert fired — detect the new popup window via context.pages
         pages = page.context.pages
         popup = pages[-1] if len(pages) > 1 and pages[-1] != page else None
         if popup is None:
+            print(f"[scraper] {date_str}: popup window not detected (pages={len(page.context.pages)})")
             return None
 
+        print(f"[scraper] {date_str}: popup detected, capturing .popup_content")
         await popup.wait_for_selector(".popup_content", timeout=10000)
         popup_content = await popup.query_selector(".popup_content")
 
         if popup_content is None:
+            print(f"[scraper] {date_str}: .popup_content not found in popup")
             await popup.close()
             return None
 
         filename = f"하이패스({date_str}).png"
         await popup_content.screenshot(path=str(output_dir / filename))
+        print(f"[scraper] {date_str}: screenshot saved → {filename}")
 
         try:
             await popup.close()

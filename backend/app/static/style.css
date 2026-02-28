@@ -54,19 +54,6 @@ h1 {
   gap: .5rem;
 }
 
-#single-date {
-  padding: .38rem .65rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-family: inherit;
-  font-size: .8rem;
-  color: var(--text);
-  background: var(--bg);
-  outline: none;
-  transition: border-color .15s;
-}
-#single-date:focus { border-color: var(--primary); }
-
 button {
   font-family: inherit;
   font-size: .8rem;
@@ -80,10 +67,31 @@ button {
 }
 button:disabled { opacity: .4; cursor: not-allowed; }
 
-button#single-btn               { background: var(--accent);  color: #fff; }
-button#single-btn:not(:disabled):hover  { background: var(--accent-hover); }
+button#delete-all-btn              { background: var(--error);   color: #fff; }
+button#delete-all-btn:not(:disabled):hover { background: #b91c1c; }
 button#refresh-btn              { background: var(--primary); color: #fff; }
 button#refresh-btn:not(:disabled):hover { background: var(--primary-hover); }
+
+.capture-icon-btn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #f1f5f9;
+  color: var(--muted);
+  border-radius: 4px;
+  margin-left: .4rem;
+  vertical-align: middle;
+  font-size: 0;
+  transition: background .15s, color .15s;
+}
+.capture-icon-btn:not(:disabled):hover { background: #dcfce7; color: var(--accent); }
+.capture-icon-btn:disabled { opacity: .35; }
+
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.spinning { animation: spin .8s linear infinite; }
 
 /* ── Status bar ──────────────────────────── */
 #status-bar {

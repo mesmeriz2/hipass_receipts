@@ -135,3 +135,12 @@ async def api_capture_single(date_str: str, background_tasks: BackgroundTasks):
 @app.get("/api/logs")
 async def api_logs():
     return scraper.capture_logs
+
+
+@app.post("/api/screenshots/delete-all")
+async def api_delete_all():
+    deleted = 0
+    for f in config.SCREENSHOTS_DIR.glob("*.png"):
+        f.unlink()
+        deleted += 1
+    return {"deleted": deleted}
