@@ -1,0 +1,19 @@
+services:
+  hipass:
+    build: ./backend
+    container_name: hipass
+    ports:
+      - "${PORT:-8007}:8000"
+    volumes:
+      - ./backend/screenshots:/app/screenshots
+      - ./.env:/app/.env:ro
+    env_file:
+      - .env
+    shm_size: '512mb'
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

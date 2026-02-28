@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HiPass 영수증 자동수집</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+<header>
+  <h1>HiPass 영수증 자동수집</h1>
+  <div id="header-actions">
+    <input type="date" id="single-date" />
+    <button id="single-btn" onclick="startSingleCapture()">단일 캡처</button>
+    <button id="refresh-btn" onclick="startRefresh()">전체 새로고침</button>
+  </div>
+</header>
+
+<div id="status-bar" class="hidden">
+  <div id="status-top">
+    <span id="status-icon"></span>
+    <span id="status-text"></span>
+  </div>
+  <div id="progress-bar-wrap"><div id="progress-bar"></div></div>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>날짜</th>
+      <th>미리보기</th>
+      <th>다운로드</th>
+    </tr>
+  </thead>
+  <tbody id="screenshot-tbody">
+    {% for item in screenshots %}
+    <tr>
+      <td class="date-cell" data-date="{{ item.date }}">{{ item.date }}</td>
+      <td>
+        {% if item.exists %}
+          <button class="preview-btn" onclick="openModal('/screenshots/{{ item.filename }}')">미리보기</button>
+        {% else %}
+          <span class="empty-label">기록 없음</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if item.exists %}
+          <a class="dl-btn" href="/screenshots/{{ item.filename }}" download="{{ item.filename }}">다운로드</a>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<details id="log-details">
+  <summary>캡처 로그</summary>
+  <table class="log-table">
+    <thead>
+      <tr><th>날짜</th><th>상태</th><th>메시지</th><th>시각</th></tr>
+    </thead>
+    <tbody id="log-tbody">
+      <tr><td colspan="4" class="log-empty">새로고침 후 확인 가능합니다.</td></tr>
+    </tbody>
+  </table>
+</details>
+
+<!-- Image modal -->
+<div id="modal-overlay" onclick="closeModal()">
+  <div id="modal-box" onclick="event.stopPropagation()">
+    <img id="modal-img" src="" alt="" />
+    <button id="modal-close" onclick="closeModal()">✕</button>
+  </div>
+</div>
+
+<script>
+let _pollTimer = null;
+let _hideTimer = null;
+
+const DAYS = ['일', '월', '화', '수', '목', '금', '토'];
+
+function formatDateHTML(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  const day = d.getDay();
+  const label = DAYS[day];
+  const isWeekend = day === 0 || day === 6;
+  return `${dateStr} <span class="day-label${isWeekend ? ' weekend' : ''}">(${label})</span>`;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('single-date').value = new Date().toISOString().split('T')[0];
+  document.querySelectorAll('.date-cell[data-date]').forEach(td => {
+    td.innerHTML = formatDateHTML(td.dataset.date);
+  });
+});
+
+function openModal(src) {
+  document.getElementById('modal-img').src = src;
+  document.getElementById('modal-overlay').classList.add('active');
+}
+function closeModal() {
+  document.getElementById('modal-overlay').classList.remove('active');
+}
+
+function showStatus(msg, icon) {
+  const bar = document.getElementById('status-bar');
+  document.getElementById('status-icon').textContent = icon ?? '⏳';
+  document.getElementById('status-text').textContent = msg;
+  bar.classList.remove('hidden', 'done');
+  if (_hideTimer) { clearTimeout(_hideTimer); _hideTimer = null; }
+}
+
+function completeStatus(msg) {
+  const bar = document.getElementById('status-bar');
+  document.getElementById('status-icon').textContent = '✓';
+  document.getElementById('status-text').textContent = msg;
+  bar.classList.add('done');
+  _hideTimer = setTimeout(() => bar.classList.add('hidden'), 3000);
+}
+
+function showProgress(pct) {
+  document.getElementById('progress-bar').style.width = pct + '%';
+}
+
+async function startRefresh() {
+  const btn = document.getElementById('refresh-btn');
+  btn.disabled = true;
+  document.getElementById('single-btn').disabled = true;
+  showStatus('전체 캡처 시작 중...');
+  showProgress(0);
+
+  const res = await fetch('/api/refresh', { method: 'POST' });
+  const { job_id } = await res.json();
+  pollStatus(job_id, [btn, document.getElementById('single-btn')]);
+}
+
+async function startSingleCapture() {
+  const dateVal = document.getElementById('single-date').value;
+  if (!dateVal) { alert('날짜를 선택하세요'); return; }
+
+  const btn = document.getElementById('single-btn');
+  btn.disabled = true;
+  document.getElementById('refresh-btn').disabled = true;
+  showStatus(`${dateVal} 캡처 시작 중...`);
+  showProgress(0);
+
+  const res = await fetch(`/api/capture/${dateVal}`, { method: 'POST' });
+  const data = await res.json();
+  if (data.error) {
+    showStatus(`오류: ${data.error}`, '✗');
+    btn.disabled = false;
+    document.getElementById('refresh-btn').disabled = false;
+    return;
+  }
+  pollStatus(data.job_id, [btn, document.getElementById('refresh-btn')]);
+}
+
+function pollStatus(job_id, btnsToRestore) {
+  const restore = btnsToRestore || [document.getElementById('refresh-btn')];
+  _pollTimer = setInterval(async () => {
+    const res = await fetch(`/api/status/${job_id}`);
+    const job = await res.json();
+    if (job.error) { clearInterval(_pollTimer); return; }
+
+    const pct = job.total > 0 ? Math.round(job.done / job.total * 100) : 0;
+    const dateLabel = job.current_date ? ` — ${job.current_date}` : '';
+    showStatus(`캡처 중 (${job.done}/${job.total})${dateLabel}`);
+    showProgress(pct);
+
+    if (job.finished) {
+      clearInterval(_pollTimer);
+      showProgress(100);
+      await reloadTable();
+      await reloadLogs();
+      restore.forEach(b => b.disabled = false);
+      completeStatus(`완료 (${job.done}/${job.total})`);
+    }
+  }, 1500);
+}
+
+async function reloadTable() {
+  const res = await fetch('/api/screenshots');
+  const list = await res.json();
+  const tbody = document.getElementById('screenshot-tbody');
+  tbody.innerHTML = list.map(item => {
+    const dateHTML = formatDateHTML(item.date);
+    if (item.exists) {
+      return `<tr>
+        <td class="date-cell">${dateHTML}</td>
+        <td><button class="preview-btn" onclick="openModal('/screenshots/${item.filename}')">미리보기</button></td>
+        <td><a class="dl-btn" href="/screenshots/${item.filename}" download="${item.filename}">다운로드</a></td>
+      </tr>`;
+    }
+    return `<tr>
+      <td class="date-cell">${dateHTML}</td>
+      <td><span class="empty-label">기록 없음</span></td>
+      <td></td>
+    </tr>`;
+  }).join('');
+}
+
+async function reloadLogs() {
+  const res = await fetch('/api/logs');
+  const logs = await res.json();
+  const tbody = document.getElementById('log-tbody');
+  if (!logs.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="log-empty">로그 없음</td></tr>';
+    return;
+  }
+  const cls   = { success: 'status-success', empty: 'status-empty', error: 'status-error', skipped: 'status-skipped' };
+  const label = { success: '✓ 성공', empty: '— 기록 없음', error: '✗ 오류', skipped: '↩ 스킵' };
+  tbody.innerHTML = logs.map(l => `<tr>
+    <td>${l.date}</td>
+    <td class="${cls[l.status] || ''}">${label[l.status] || l.status}</td>
+    <td>${l.message}</td>
+    <td>${l.timestamp}</td>
+  </tr>`).join('');
+  document.getElementById('log-details').open = true;
+}
+</script>
+</body>
+</html>
