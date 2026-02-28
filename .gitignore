@@ -1,5 +1,6 @@
 # Environment
 .env
+hipass_setting.json
 
 # Screenshots (user data)
 backend/screenshots/*.png
