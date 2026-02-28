@@ -23,3 +23,4 @@ SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
 
 RETENTION_DAYS: int = int(_get("RETENTION_DAYS", "14"))
 SCHEDULE_HOUR: int = int(_get("SCHEDULE_HOUR", "6"))
+CAPTURE_COOLDOWN: float = float(_get("CAPTURE_COOLDOWN", "2.0"))

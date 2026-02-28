@@ -7,6 +7,20 @@ from playwright.async_api import async_playwright, Page
 
 from . import config
 
+CHROMIUM_ARGS = [
+    "--no-sandbox",
+    "--disable-gpu",
+    "--disable-dev-shm-usage",
+    "--disable-software-rasterizer",
+    "--disable-extensions",
+    "--disable-background-timer-throttling",
+    "--disable-renderer-backgrounding",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-features=TranslateUI",
+    "--single-process",
+    "--js-flags=--max-old-space-size=256",
+]
+
 # In-memory log for the most recent capture session
 capture_logs: list[dict] = []
 
@@ -109,28 +123,47 @@ async def capture_date(
     page: Page, target_date: date, output_dir: Path
 ) -> Optional[str]:
     date_str = target_date.strftime("%Y-%m-%d")
+    alert_fired = False
+
+    def on_dialog(dialog):
+        nonlocal alert_fired
+        alert_fired = True
+        asyncio.ensure_future(dialog.dismiss())
+
+    page.on("dialog", on_dialog)
     try:
         form = await _find_form_frame(page)
 
-        await form.fill("#sDate_view", date_str)
-        await form.press("#sDate_view", "Enter")
-        await form.fill("#eDate_view", date_str)
-        await form.press("#eDate_view", "Enter")
+        # Use JS to set date values and fire change events — avoids datepicker
+        # widget interference that fill()+Enter can cause between loop iterations.
+        await form.evaluate(
+            """(dateStr) => {
+                const s = document.querySelector('#sDate_view');
+                const e = document.querySelector('#eDate_view');
+                if (s) { s.value = dateStr; s.dispatchEvent(new Event('change', {bubbles: true})); }
+                if (e) { e.value = dateStr; e.dispatchEvent(new Event('change', {bubbles: true})); }
+            }""",
+            date_str,
+        )
 
         await form.wait_for_selector("#lookupBtn a", timeout=5000)
 
-        # Get frame reference before clicking so we can wait for its reload
+        await form.click("#lookupBtn a")
+
+        # Wait for iframe to finish loading with the new query results,
+        # then re-acquire frame reference so we get the new JS context.
+        await asyncio.sleep(0.5)
         frame = page.frame(name="if_main_post")
         if frame is None:
             return None
-
-        await form.click("#lookupBtn a")
-
-        # Wait for iframe to finish loading with the new query results
         try:
             await frame.wait_for_load_state("load", timeout=12000)
         except Exception:
             pass
+        # Re-acquire once more after load to ensure context is current
+        frame = page.frame(name="if_main_post")
+        if frame is None:
+            return None
 
         popup_btn_selector = "#billAll"
         try:
@@ -141,9 +174,19 @@ async def capture_date(
 
         await frame.eval_on_selector(popup_btn_selector, "el => el.scrollIntoView()")
 
-        async with page.expect_popup() as popup_info:
-            await frame.eval_on_selector(popup_btn_selector, "el => el.click()")
-        popup = await popup_info.value
+        # Click #billAll — may trigger a JS alert ("데이터 없음") or open a popup
+        await frame.eval_on_selector(popup_btn_selector, "el => el.click()")
+        await asyncio.sleep(0.5)  # give alert/popup time to appear
+
+        if alert_fired:
+            # "출력할 영수증 데이터가 없습니다." — no data for this date
+            return None
+
+        # No alert fired — detect the new popup window via context.pages
+        pages = page.context.pages
+        popup = pages[-1] if len(pages) > 1 and pages[-1] != page else None
+        if popup is None:
+            return None
 
         await popup.wait_for_selector(".popup_content", timeout=10000)
         popup_content = await popup.query_selector(".popup_content")
@@ -164,6 +207,8 @@ async def capture_date(
 
     except Exception:
         raise
+    finally:
+        page.remove_listener("dialog", on_dialog)
 
 
 async def capture_single_date_standalone(
@@ -177,8 +222,8 @@ async def capture_single_date_standalone(
     date_str = target_date.strftime("%Y-%m-%d")
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
+        browser = await p.chromium.launch(headless=True, args=CHROMIUM_ARGS)
+        page = await browser.new_page(viewport={"width": 1024, "height": 768})
 
         try:
             await login(page, config.HIPASS_ID, config.HIPASS_PW)
@@ -239,8 +284,8 @@ async def capture_last_n_days(
     dates = [today - timedelta(days=i) for i in range(n)]
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
+        browser = await p.chromium.launch(headless=True, args=CHROMIUM_ARGS)
+        page = await browser.new_page(viewport={"width": 1024, "height": 768})
 
         try:
             await login(page, config.HIPASS_ID, config.HIPASS_PW)
@@ -303,6 +348,7 @@ async def capture_last_n_days(
             capture_logs.append(entry)
             if progress_callback:
                 progress_callback(idx + 1, n, date_str)
+            await asyncio.sleep(config.CAPTURE_COOLDOWN)
 
         await browser.close()
 

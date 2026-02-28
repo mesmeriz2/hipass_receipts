@@ -9,7 +9,12 @@ services:
       - ./.env:/app/.env:ro
     env_file:
       - .env
-    shm_size: '512mb'
+    shm_size: '256mb'
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 768M
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
