@@ -13,7 +13,6 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.0'
           memory: 1024M
     restart: unless-stopped
     healthcheck:
