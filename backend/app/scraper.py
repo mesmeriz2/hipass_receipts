@@ -307,7 +307,8 @@ async def capture_last_n_days(
     capture_logs = []
 
     today = date.today()
-    dates = [today - timedelta(days=i) for i in range(n)]
+    # HiPass registers yesterday's receipts today, so start from yesterday
+    dates = [today - timedelta(days=i) for i in range(1, n + 1)]
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=CHROMIUM_ARGS)
