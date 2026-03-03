@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, BackgroundTasks
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.requests import Request
@@ -69,6 +69,14 @@ async def index(request: Request):
         "index.html",
         {"request": request, "screenshots": screenshots},
     )
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    favicon_path = STATIC_DIR / "favicon.svg"
+    if favicon_path.exists():
+        return FileResponse(str(favicon_path), media_type="image/svg+xml")
+    return Response(status_code=204)
 
 
 @app.get("/health")

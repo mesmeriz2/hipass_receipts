@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Callable, Optional
@@ -18,8 +19,33 @@ CHROMIUM_ARGS = [
     "--disable-features=TranslateUI",
 ]
 
-# In-memory log for the most recent capture session
-capture_logs: list[dict] = []
+_LOG_LIMIT = 20
+_LOG_FILE = config.SCREENSHOTS_DIR / "capture_log.json"
+
+
+def _load_logs() -> list[dict]:
+    try:
+        if _LOG_FILE.exists():
+            return json.loads(_LOG_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return []
+
+
+# Persistent rolling log — loaded from disk on startup, trimmed to _LOG_LIMIT entries
+capture_logs: list[dict] = _load_logs()
+
+
+def _append_log(entry: dict) -> None:
+    capture_logs.append(entry)
+    if len(capture_logs) > _LOG_LIMIT:
+        del capture_logs[:-_LOG_LIMIT]
+    try:
+        _LOG_FILE.write_text(
+            json.dumps(capture_logs, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except Exception:
+        pass
 
 
 async def login(page: Page, user_id: str, password: str) -> None:
@@ -242,9 +268,6 @@ async def capture_single_date_standalone(
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
 ) -> list[dict]:
     """Full Playwright session for a single date. Used for one-off captures and testing."""
-    global capture_logs
-    capture_logs = []
-
     date_str = target_date.strftime("%Y-%m-%d")
 
     async with async_playwright() as p:
@@ -256,7 +279,7 @@ async def capture_single_date_standalone(
             await navigate_to_lookup(page, config.ECD_NO)
         except Exception as e:
             await browser.close()
-            capture_logs.append({
+            _append_log({
                 "date": date_str,
                 "status": "error",
                 "message": f"로그인 실패: {e}",
@@ -268,7 +291,7 @@ async def capture_single_date_standalone(
         output_path = config.SCREENSHOTS_DIR / filename
 
         if output_path.exists():
-            capture_logs.append({
+            _append_log({
                 "date": date_str,
                 "status": "skipped",
                 "message": "이미 존재함",
@@ -277,14 +300,14 @@ async def capture_single_date_standalone(
         else:
             try:
                 result = await capture_date(page, target_date, config.SCREENSHOTS_DIR)
-                capture_logs.append({
+                _append_log({
                     "date": date_str,
                     "status": "success" if result else "empty",
                     "message": "캡처 완료" if result else "통행 기록 없음",
                     "timestamp": _now_iso(),
                 })
             except Exception as e:
-                capture_logs.append({
+                _append_log({
                     "date": date_str,
                     "status": "error",
                     "message": str(e),
@@ -303,9 +326,6 @@ async def capture_last_n_days(
     n: int = 14,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
 ) -> list[dict]:
-    global capture_logs
-    capture_logs = []
-
     today = date.today()
     # HiPass registers yesterday's receipts today, so start from yesterday
     dates = [today - timedelta(days=i) for i in range(1, n + 1)]
@@ -319,7 +339,7 @@ async def capture_last_n_days(
             await navigate_to_lookup(page, config.ECD_NO)
         except Exception as e:
             await browser.close()
-            capture_logs.append({
+            _append_log({
                 "date": today.isoformat(),
                 "status": "error",
                 "message": f"로그인 실패: {e}",
@@ -333,7 +353,7 @@ async def capture_last_n_days(
             output_path = config.SCREENSHOTS_DIR / filename
 
             if output_path.exists():
-                capture_logs.append({
+                _append_log({
                     "date": date_str,
                     "status": "skipped",
                     "message": "이미 존재함",
@@ -372,7 +392,7 @@ async def capture_last_n_days(
                 except Exception:
                     pass
 
-            capture_logs.append(entry)
+            _append_log(entry)
             if progress_callback:
                 progress_callback(idx + 1, n, date_str)
             await asyncio.sleep(config.CAPTURE_COOLDOWN)

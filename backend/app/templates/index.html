@@ -4,14 +4,20 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>HiPass 영수증 자동수집</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
 
+<div class="container">
+
 <header>
-  <h1>HiPass 영수증 자동수집</h1>
+  <div class="header-title">
+    <span class="header-dot"></span>
+    <h1>HiPass 영수증 자동수집</h1>
+  </div>
   <div id="header-actions">
     <button id="delete-all-btn" onclick="deleteAllScreenshots()">전체 삭제</button>
     <button id="refresh-btn" onclick="startRefresh()">전체 새로고침</button>
@@ -62,10 +68,12 @@
       <tr><th>날짜</th><th>상태</th><th>메시지</th><th>시각</th></tr>
     </thead>
     <tbody id="log-tbody">
-      <tr><td colspan="4" class="log-empty">새로고침 후 확인 가능합니다.</td></tr>
+      <tr><td colspan="4" class="log-empty">불러오는 중...</td></tr>
     </tbody>
   </table>
 </details>
+
+</div><!-- /.container -->
 
 <!-- Image modal -->
 <div id="modal-overlay" onclick="closeModal()">
@@ -113,6 +121,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const dateStr = td.dataset.date;
     td.innerHTML = formatDateHTML(dateStr) + getCaptureIconHTML(dateStr);
   });
+  reloadLogs();
 });
 
 function openModal(src) {
