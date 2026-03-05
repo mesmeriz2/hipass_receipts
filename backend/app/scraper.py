@@ -49,7 +49,7 @@ def _append_log(entry: dict) -> None:
 
 
 async def login(page: Page, user_id: str, password: str) -> None:
-    await page.goto("https://www.hipass.co.kr/comm/lginpg.do")
+    await page.goto("https://www.hipass.co.kr/comm/lginpg.do", timeout=60000)
 
     try:
         await page.wait_for_load_state("networkidle", timeout=8000)
@@ -107,7 +107,7 @@ async def login(page: Page, user_id: str, password: str) -> None:
 
 
 async def navigate_to_lookup(page: Page, ecd_no: str) -> None:
-    await page.goto("https://www.hipass.co.kr/usepculr/InitUsePculrTabSearch.do")
+    await page.goto("https://www.hipass.co.kr/usepculr/InitUsePculrTabSearch.do", timeout=60000)
 
     try:
         await page.wait_for_load_state("networkidle", timeout=10000)

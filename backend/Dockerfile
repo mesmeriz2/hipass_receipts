@@ -1,6 +1,7 @@
 FROM python:3.12-slim-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Seoul
 
 WORKDIR /app
 
